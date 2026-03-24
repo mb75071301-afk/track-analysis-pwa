@@ -53,6 +53,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .gd-apikey-panel .hint{margin-top:4px;}
 .gd-apikey-panel .hint a{color:var(--blue);text-decoration:none;}
 .gd-apikey-save{margin-top:6px;background:var(--blue) !important;padding:7px !important;font-size:12px !important;}
+.gd-picker-btn{background:var(--blue) !important;margin-bottom:4px;}
+.gd-picker-btn:disabled{opacity:.5;cursor:not-allowed;}
+.gd-manual{margin:6px 0;}
+.gd-manual summary{font-size:11px;color:var(--text3);cursor:pointer;padding:4px 0;user-select:none;list-style:none;display:flex;align-items:center;gap:4px;}
+.gd-manual summary:hover{color:var(--text);}
+.gd-manual summary::before{content:'▸';font-size:10px;}
+.gd-manual[open] summary::before{content:'▾';}
+.gd-apikey-panel label.sub{font-size:11px;color:var(--text2);display:block;margin-top:6px;}
 
 .or-div{text-align:center;color:var(--text3);margin:12px 0;font-size:11px;}
 .up-box{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center;cursor:pointer;}
@@ -233,22 +241,33 @@ canvas{width:100%;border-radius:5px;background:var(--bg);touch-action:pan-y;}
   <div class="home-hdr"><h1>RES Instrument</h1><p>Racing Electronic System — Visualize your sensation</p><div class="ver">v3.0</div></div>
   <div class="gd-box">
     <label>📁 從 Google Drive 匯入</label>
-    <input type="text" id="gdUrl" placeholder="貼上資料夾或檔案連結...">
-    <div class="hint">資料夾或檔案需設為「知道連結的人都能查看」</div>
+    <!-- Primary: Google Picker (OAuth) -->
+    <button id="gdPickerBtn" class="gd-picker-btn" onclick="startGdPicker()">🗂️ 選取 Google Drive 檔案</button>
+    <!-- Fallback: manual URL -->
+    <details class="gd-manual">
+      <summary>或手動貼上連結（備用）</summary>
+      <input type="text" id="gdUrl" placeholder="貼上資料夾或檔案連結..." style="margin-top:6px;">
+      <div class="hint">資料夾或檔案需設為「知道連結的人都能查看」</div>
+      <button id="gdBtn" style="margin-top:8px;background:var(--orange);">載入連結</button>
+    </details>
+    <!-- Settings -->
     <div class="gd-apikey">
       <div class="gd-apikey-toggle" id="gdKeyToggle" onclick="toggleGdKey()">
-        <span>🔑</span><span id="gdKeyStatus">API Key 未設定（僅支援直接檔案連結）</span><span style="margin-left:auto">▸</span>
+        <span>⚙️</span><span id="gdKeyStatus">憑證未設定</span><span style="margin-left:auto">▸</span>
       </div>
       <div class="gd-apikey-panel" id="gdKeyPanel">
-        <input type="password" id="gdApiKeyInput" placeholder="Google Drive API Key...">
-        <div class="hint">
+        <label class="sub">OAuth 2.0 Client ID</label>
+        <input type="text" id="gdClientIdInput" placeholder="xxxx.apps.googleusercontent.com">
+        <label class="sub">API Key</label>
+        <input type="text" id="gdApiKeyInput" placeholder="Google Drive API Key...">
+        <div class="hint" style="margin-top:6px;">
           申請：<a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a>
-          → 建立專案 → 啟用 Drive API → 憑證 → 建立 API 金鑰（限制為 Drive API）
+          → 啟用 Drive API &amp; Picker API → 建立 OAuth Client ID（Web 應用程式，
+          已授權的 JavaScript 來源：<b>https://mb75071301-afk.github.io</b>）+ API 金鑰
         </div>
-        <button class="gd-apikey-save" onclick="saveGdKey()">儲存 API Key</button>
+        <button class="gd-apikey-save" onclick="saveGdKey()">儲存設定</button>
       </div>
     </div>
-    <button id="gdBtn">載入</button>
   </div>
   <div class="or-div">— 或 —</div>
   <div class="up-box" id="upBox"><div class="ico">📂</div><p>從手機/電腦選擇 CSV 檔案</p><input type="file" id="upFiles" multiple accept=".csv,.CSV"></div>
@@ -463,8 +482,12 @@ function updLangUI(){
 }
 let sessions=[];
 try{sessions=JSON.parse(localStorage.getItem('tSessions')||'[]');}catch(e){}
-// Restore GD API key and update status label after DOM is ready
-document.addEventListener('DOMContentLoaded',()=>{updateGdKeyStatus();});
+// Restore credentials, update UI, and pre-load Google SDK if credentials are already configured
+document.addEventListener('DOMContentLoaded',()=>{
+  updateGdKeyStatus();
+  // Pre-load SDK in background so it's ready when user first clicks the Picker button
+  if(gdClientId&&gdApiKey)initGoogleSDK().catch(()=>{});
+});
 
 // Helpers
 function ms2l(ms){const m=Math.floor(ms/60000),s=((ms%60000)/1000).toFixed(3);return m+':'+(s<10?'0':'')+s;}
@@ -822,27 +845,143 @@ function procCSV(texts){
   return result;
 }
 
-// ===== Google Drive API Key Management =====
+// ===== Google Drive Credentials + Picker =====
 let gdApiKey=localStorage.getItem('gdApiKey')||'';
+let gdClientId=localStorage.getItem('gdClientId')||'';
+let gapiPickerReady=false;
+let gdTokenClient=null;
+let gdAccessToken=null;
+
 function toggleGdKey(){
   const panel=document.getElementById('gdKeyPanel');
   const arrow=document.querySelector('#gdKeyToggle span:last-child');
   const open=panel.classList.toggle('open');
   if(arrow)arrow.textContent=open?'▾':'▸';
-  if(open)document.getElementById('gdApiKeyInput').value=gdApiKey;
+  if(open){
+    document.getElementById('gdApiKeyInput').value=gdApiKey;
+    document.getElementById('gdClientIdInput').value=gdClientId;
+  }
 }
 function saveGdKey(){
   gdApiKey=document.getElementById('gdApiKeyInput').value.trim();
+  gdClientId=document.getElementById('gdClientIdInput').value.trim();
   localStorage.setItem('gdApiKey',gdApiKey);
+  localStorage.setItem('gdClientId',gdClientId);
+  gdTokenClient=null;gdAccessToken=null;// force re-init with new credentials
   updateGdKeyStatus();
   document.getElementById('gdKeyPanel').classList.remove('open');
   const arrow=document.querySelector('#gdKeyToggle span:last-child');
   if(arrow)arrow.textContent='▸';
-  toast(gdApiKey?'API Key 已儲存':'API Key 已清除');
+  if(gdClientId&&gdApiKey)initGoogleSDK().catch(()=>{});
+  toast(gdClientId&&gdApiKey?'設定已儲存 ✓':'設定已清除');
 }
 function updateGdKeyStatus(){
   const el=document.getElementById('gdKeyStatus');
-  if(el)el.textContent=gdApiKey?'API Key 已設定 ✓':'API Key 未設定（僅支援直接檔案連結）';
+  if(!el)return;
+  if(gdClientId&&gdApiKey)el.textContent='已設定 ✓';
+  else if(gdApiKey&&!gdClientId)el.textContent='缺少 Client ID（手動連結仍可用）';
+  else el.textContent='憑證未設定';
+}
+
+// ===== Google SDK Loader (called proactively; NOT inside click handler) =====
+async function initGoogleSDK(){
+  if(!gdClientId||!gdApiKey)return;
+  // Load gapi
+  if(typeof gapi==='undefined'){
+    await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://apis.google.com/js/api.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+  }
+  // Load Picker via gapi.load
+  if(!gapiPickerReady){
+    await new Promise(res=>gapi.load('picker',res));
+    gapiPickerReady=true;
+  }
+  // Load Google Identity Services
+  if(typeof google==='undefined'||!google.accounts){
+    await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+  }
+  // Init token client (only once; recreate if credentials changed)
+  if(!gdTokenClient){
+    gdTokenClient=google.accounts.oauth2.initTokenClient({
+      client_id:gdClientId,
+      scope:'https://www.googleapis.com/auth/drive.readonly',
+      callback:handleGdToken,
+    });
+  }
+}
+
+// ===== Picker Entry Point (must be called synchronously from user click) =====
+function startGdPicker(){
+  if(!gdClientId||!gdApiKey){
+    document.getElementById('gdKeyPanel').classList.add('open');
+    const arrow=document.querySelector('#gdKeyToggle span:last-child');
+    if(arrow)arrow.textContent='▾';
+    toast('請先設定 OAuth Client ID 和 API Key');
+    return;
+  }
+  if(!gdTokenClient||!gapiPickerReady){
+    // SDK not ready yet — try loading, then ask user to click again
+    toast('正在載入 Google SDK，請稍候後再試一次…');
+    initGoogleSDK().catch(()=>toast('Google SDK 載入失敗，請確認網路連線'));
+    return;
+  }
+  // requestAccessToken MUST be called synchronously inside a user-click handler
+  gdTokenClient.requestAccessToken({prompt:gdAccessToken?'':'select_account'});
+}
+
+async function handleGdToken(resp){
+  if(resp.error){toast('Google 授權失敗：'+(resp.error_description||resp.error));return;}
+  gdAccessToken=resp.access_token;
+  openPicker();
+}
+
+function openPicker(){
+  if(!gapiPickerReady||!gdAccessToken)return;
+  const view=new google.picker.DocsView(google.picker.ViewId.DOCS)
+    .setMimeTypes('text/csv,application/zip,application/x-zip-compressed,application/octet-stream')
+    .setIncludeFolders(false);
+  new google.picker.PickerBuilder()
+    .addView(view)
+    .setOAuthToken(gdAccessToken)
+    .setDeveloperKey(gdApiKey)
+    .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+    .setOrigin(location.protocol+'//'+location.host)
+    .setCallback(pickerCallback)
+    .build()
+    .setVisible(true);
+}
+
+async function pickerCallback(data){
+  if(data[google.picker.Response.ACTION]!==google.picker.Action.PICKED)return;
+  const docs=data[google.picker.Response.DOCUMENTS];
+  if(!docs||!docs.length)return;
+  show('load');
+  const allTexts=[];
+  for(let i=0;i<docs.length;i++){
+    const doc=docs[i];
+    const fileId=doc[google.picker.Document.ID];
+    const fileName=doc[google.picker.Document.NAME];
+    msg('下載 '+fileName+' ('+(i+1)+'/'+docs.length+')...');
+    let r;
+    try{
+      r=await fetch('https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media',
+        {headers:{Authorization:'Bearer '+gdAccessToken}});
+    }catch(e){toast('無法連線下載 '+fileName);continue;}
+    if(!r.ok){
+      if(r.status===401){gdAccessToken=null;toast('授權已過期，請重新點選「選取 Google Drive 檔案」');show('home');return;}
+      toast('下載失敗 ('+r.status+'): '+fileName);continue;
+    }
+    const buf=await r.arrayBuffer();
+    const texts=await bufToCsvTexts(buf);
+    allTexts.push(...texts);
+  }
+  if(!allTexts.length){show('home');toast('無法讀取任何 CSV 資料');return;}
+  msg('分析數據...');
+  const d=procCSV(allTexts);
+  if(d){
+    const firstName=docs[0][google.picker.Document.NAME];
+    const dt=parseDataDate(allTexts[0],firstName)||new Date();
+    addRider(d,'GDrive_'+dt.toLocaleDateString('zh-TW'),dt.toISOString());
+  }else{show('home');toast('無法偵測有效圈數');}
 }
 
 // Download a single Drive file as ArrayBuffer; handles large-file confirmation page
