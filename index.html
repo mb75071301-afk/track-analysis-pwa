@@ -44,6 +44,15 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .gd-box .hint{color:var(--text3);font-size:10px;margin-top:4px;}
 .gd-box button,.btn-primary{width:100%;background:var(--green);color:#fff;border:none;padding:11px;border-radius:8px;font-size:14px;font-weight:600;margin-top:10px;cursor:pointer;}
 .gd-box button:active,.btn-primary:active{opacity:.85;transform:scale(.98);}
+.gd-apikey{margin-top:8px;border-top:1px solid var(--border);padding-top:8px;}
+.gd-apikey-toggle{font-size:11px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;user-select:none;}
+.gd-apikey-toggle:hover{color:var(--text);}
+.gd-apikey-panel{display:none;margin-top:8px;}
+.gd-apikey-panel.open{display:block;}
+.gd-apikey-panel input{font-size:12px;padding:7px 10px;}
+.gd-apikey-panel .hint{margin-top:4px;}
+.gd-apikey-panel .hint a{color:var(--blue);text-decoration:none;}
+.gd-apikey-save{margin-top:6px;background:var(--blue) !important;padding:7px !important;font-size:12px !important;}
 
 .or-div{text-align:center;color:var(--text3);margin:12px 0;font-size:11px;}
 .up-box{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center;cursor:pointer;}
@@ -222,7 +231,25 @@ canvas{width:100%;border-radius:5px;background:var(--bg);touch-action:pan-y;}
 
 <div id="homeScreen" class="hide">
   <div class="home-hdr"><h1>RES Instrument</h1><p>Racing Electronic System — Visualize your sensation</p><div class="ver">v3.0</div></div>
-  <div class="gd-box"><label>📁 從 Google Drive 匯入</label><input type="text" id="gdUrl" placeholder="貼上分享連結..."><div class="hint">資料夾或檔案需設為「知道連結的人都能查看」</div><button id="gdBtn">載入</button></div>
+  <div class="gd-box">
+    <label>📁 從 Google Drive 匯入</label>
+    <input type="text" id="gdUrl" placeholder="貼上資料夾或檔案連結...">
+    <div class="hint">資料夾或檔案需設為「知道連結的人都能查看」</div>
+    <div class="gd-apikey">
+      <div class="gd-apikey-toggle" id="gdKeyToggle" onclick="toggleGdKey()">
+        <span>🔑</span><span id="gdKeyStatus">API Key 未設定（僅支援直接檔案連結）</span><span style="margin-left:auto">▸</span>
+      </div>
+      <div class="gd-apikey-panel" id="gdKeyPanel">
+        <input type="password" id="gdApiKeyInput" placeholder="Google Drive API Key...">
+        <div class="hint">
+          申請：<a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a>
+          → 建立專案 → 啟用 Drive API → 憑證 → 建立 API 金鑰（限制為 Drive API）
+        </div>
+        <button class="gd-apikey-save" onclick="saveGdKey()">儲存 API Key</button>
+      </div>
+    </div>
+    <button id="gdBtn">載入</button>
+  </div>
   <div class="or-div">— 或 —</div>
   <div class="up-box" id="upBox"><div class="ico">📂</div><p>從手機/電腦選擇 CSV 檔案</p><input type="file" id="upFiles" multiple accept=".csv,.CSV"></div>
   
@@ -436,6 +463,8 @@ function updLangUI(){
 }
 let sessions=[];
 try{sessions=JSON.parse(localStorage.getItem('tSessions')||'[]');}catch(e){}
+// Restore GD API key and update status label after DOM is ready
+document.addEventListener('DOMContentLoaded',()=>{updateGdKeyStatus();});
 
 // Helpers
 function ms2l(ms){const m=Math.floor(ms/60000),s=((ms%60000)/1000).toFixed(3);return m+':'+(s<10?'0':'')+s;}
@@ -793,50 +822,125 @@ function procCSV(texts){
   return result;
 }
 
+// ===== Google Drive API Key Management =====
+let gdApiKey=localStorage.getItem('gdApiKey')||'';
+function toggleGdKey(){
+  const panel=document.getElementById('gdKeyPanel');
+  const arrow=document.querySelector('#gdKeyToggle span:last-child');
+  const open=panel.classList.toggle('open');
+  if(arrow)arrow.textContent=open?'▾':'▸';
+  if(open)document.getElementById('gdApiKeyInput').value=gdApiKey;
+}
+function saveGdKey(){
+  gdApiKey=document.getElementById('gdApiKeyInput').value.trim();
+  localStorage.setItem('gdApiKey',gdApiKey);
+  updateGdKeyStatus();
+  document.getElementById('gdKeyPanel').classList.remove('open');
+  const arrow=document.querySelector('#gdKeyToggle span:last-child');
+  if(arrow)arrow.textContent='▸';
+  toast(gdApiKey?'API Key 已儲存':'API Key 已清除');
+}
+function updateGdKeyStatus(){
+  const el=document.getElementById('gdKeyStatus');
+  if(el)el.textContent=gdApiKey?'API Key 已設定 ✓':'API Key 未設定（僅支援直接檔案連結）';
+}
+
+// Download a single Drive file as ArrayBuffer; handles large-file confirmation page
+async function fetchDriveFile(fileId){
+  let r=await fetch('https://drive.google.com/uc?export=download&id='+fileId);
+  if(!r.ok)return null;
+  const buf=await r.arrayBuffer();
+  // Detect Google's virus-scan HTML confirmation page
+  const sig=new Uint8Array(buf,0,5);
+  if(sig[0]===0x3C){// starts with '<' → HTML confirmation page
+    const html=new TextDecoder().decode(buf);
+    const cm=html.match(/confirm=([0-9A-Za-z_-]+)/);
+    if(cm){
+      r=await fetch('https://drive.google.com/uc?export=download&confirm='+cm[1]+'&id='+fileId);
+      if(!r.ok)return null;
+      return r.arrayBuffer();
+    }
+    return null;
+  }
+  return buf;
+}
+
+// Extract CSV texts from a buffer (either raw CSV or ZIP containing CSVs)
+async function bufToCsvTexts(buf){
+  const bytes=new Uint8Array(buf,0,4);
+  if(bytes[0]===0x50&&bytes[1]===0x4B){// ZIP
+    if(typeof JSZip==='undefined')return [];
+    const zip=await JSZip.loadAsync(buf);
+    const texts=[];
+    const entries=[];
+    zip.forEach((path,f)=>{if(!f.dir&&path.toLowerCase().endsWith('.csv'))entries.push(f);});
+    for(const f of entries)texts.push(await f.async('text'));
+    return texts;
+  }
+  return [new TextDecoder('utf-8').decode(buf)];
+}
+
+// List all files in a public Google Drive folder (requires API key)
+async function loadGDFolder(folderId){
+  if(!gdApiKey){
+    show('home');
+    toast('請先點選「🔑 API Key」設定 Google Drive API Key，才能使用資料夾匯入');
+    return;
+  }
+  msg('讀取資料夾內容...');
+  const q=encodeURIComponent("'"+folderId+"' in parents and trashed=false");
+  const fields=encodeURIComponent('files(id,name,mimeType)');
+  let r;
+  try{
+    r=await fetch('https://www.googleapis.com/drive/v3/files?q='+q+'&fields='+fields+'&pageSize=100&key='+gdApiKey);
+  }catch(e){show('home');toast('API 請求失敗：'+e.message);return;}
+  if(!r.ok){
+    let errMsg='API 錯誤 '+r.status;
+    try{const j=await r.json();errMsg+=': '+(j.error?.message||'');}catch(e){}
+    show('home');toast(errMsg);return;
+  }
+  const json=await r.json();
+  const files=(json.files||[]).filter(f=>
+    f.name.toLowerCase().endsWith('.csv')||
+    f.name.toLowerCase().endsWith('.zip'));
+  if(!files.length){show('home');toast('資料夾中找不到 CSV 或 ZIP 檔案');return;}
+  const allTexts=[];
+  for(let i=0;i<files.length;i++){
+    const f=files[i];
+    msg('下載 '+f.name+' ('+( i+1)+'/'+files.length+')...');
+    const buf=await fetchDriveFile(f.id);
+    if(!buf){toast('無法下載 '+f.name+'，略過');continue;}
+    const txts=await bufToCsvTexts(buf);
+    allTexts.push(...txts);
+  }
+  if(!allTexts.length){show('home');toast('無法讀取任何 CSV 資料');return;}
+  msg('分析數據...');
+  const d=procCSV(allTexts);
+  if(d){
+    const dt=parseDataDate(allTexts[0],files[0].name)||new Date();
+    addRider(d,'GDrive_'+dt.toLocaleDateString('zh-TW'),dt.toISOString());
+  }else{show('home');toast('無法偵測有效圈數');}
+}
+
 // ===== Google Drive =====
 async function loadGD(url){
   show('load');msg('連接 Google Drive...');
-  // Folder links cannot be downloaded directly
-  if(url.includes('/drive/folders/')){
-    show('home');toast('資料夾連結無法直接下載，請改為分享個別 CSV 或 ZIP 檔案連結');return;
-  }
+  // Folder link → use Drive API to list contents
+  const folderM=url.match(/\/drive\/folders\/([a-zA-Z0-9_-]+)/);
+  if(folderM){await loadGDFolder(folderM[1]);return;}
   const fm=url.match(/\/d\/([a-zA-Z0-9_-]+)/);
   if(!fm){show('home');toast('無效的 Google Drive 連結');return;}
   const fid=fm[1];
   try{
     msg('下載檔案...');
-    let r=await fetch('https://drive.google.com/uc?export=download&id='+fid);
-    if(!r.ok){show('home');toast('下載失敗（HTTP '+r.status+'），請確認連結設為公開');return;}
-    const buf=await r.arrayBuffer();
-    const bytes=new Uint8Array(buf);
-    // ZIP magic bytes: PK\x03\x04
-    if(bytes[0]===0x50&&bytes[1]===0x4B){
-      if(typeof JSZip==='undefined'){show('home');toast('ZIP 解壓功能未載入，請確認網路連線並重新整理');return;}
-      msg('解壓縮 ZIP...');
-      const zip=await JSZip.loadAsync(buf);
-      const csvEntries=[];
-      zip.forEach((path,f)=>{if(!f.dir&&path.toLowerCase().endsWith('.csv'))csvEntries.push({path,f});});
-      if(!csvEntries.length){show('home');toast('ZIP 中找不到 CSV 檔案');return;}
-      msg('讀取 CSV...');
-      const texts=await Promise.all(csvEntries.map(e=>e.f.async('text')));
-      const d=procCSV(texts);
-      if(d){const dt=parseDataDate(texts[0],csvEntries[0].path)||new Date();addRider(d,'GDrive_'+dt.toLocaleDateString('zh-TW'),dt.toISOString());return;}
-      show('home');toast('CSV 解析失敗，請確認資料格式');return;
-    }
-    let text=new TextDecoder('utf-8').decode(buf);
-    // Google large-file virus warning page (HTML response) — extract confirm token
-    if(text.trimStart().startsWith('<')){
-      const cm=text.match(/confirm=([0-9A-Za-z_-]+)/);
-      if(cm){
-        msg('確認大型檔案下載...');
-        r=await fetch('https://drive.google.com/uc?export=download&confirm='+cm[1]+'&id='+fid);
-        if(r.ok)text=await r.text();
-      }
-    }
-    if(text.includes('time,')||text.includes('speed')){
-      const d=procCSV([text]);
-      if(d){const dt=parseDataDate(text,'')||new Date();addRider(d,'GDrive_'+dt.toLocaleDateString('zh-TW'),dt.toISOString());return;}
-    }
+    const buf=await fetchDriveFile(fid);
+    if(!buf){show('home');toast('下載失敗，請確認連結設為公開');return;}
+    const texts=await bufToCsvTexts(buf);
+    if(!texts.length){show('home');toast('ZIP 中找不到 CSV 檔案');return;}
+    msg('分析數據...');
+    const d=procCSV(texts);
+    if(d){const dt=parseDataDate(texts[0],'')||new Date();addRider(d,'GDrive_'+dt.toLocaleDateString('zh-TW'),dt.toISOString());return;}
+    show('home');toast('無法偵測有效圈數');
   }catch(e){console.error('GDrive:',e);}
   show('home');toast('請確認連結設為公開，或直接選擇檔案匯入');
 }
