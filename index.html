@@ -847,37 +847,85 @@ function updateGdKeyStatus(){
 
 // Download a single Drive file as ArrayBuffer; handles large-file confirmation page
 async function fetchDriveFile(fileId){
-  let r=await fetch('https://drive.google.com/uc?export=download&id='+fileId);
-  if(!r.ok)return null;
-  const buf=await r.arrayBuffer();
-  // Detect Google's virus-scan HTML confirmation page
-  const sig=new Uint8Array(buf,0,5);
-  if(sig[0]===0x3C){// starts with '<' → HTML confirmation page
+  // Candidate URLs in priority order.
+  // drive.usercontent.google.com with confirm=t is Google's current (2024+) direct CDN endpoint.
+  const candidates=[
+    'https://drive.usercontent.google.com/download?id='+fileId+'&export=download&authuser=0&confirm=t',
+    'https://drive.google.com/uc?export=download&id='+fileId+'&confirm=t',
+    'https://drive.google.com/uc?export=download&id='+fileId,
+  ];
+  for(const url of candidates){
+    let r;
+    try{r=await fetch(url);}catch(e){continue;}
+    if(!r.ok)continue;
+    const buf=await r.arrayBuffer();
+    if(!buf||buf.byteLength<4)continue;
+    // HTML detection: check first non-whitespace byte for '<' (also handles UTF-8 BOM EF BB BF)
+    const sig=new Uint8Array(buf,0,Math.min(64,buf.byteLength));
+    let firstNonWs=0;
+    while(firstNonWs<sig.length&&(sig[firstNonWs]===0x20||sig[firstNonWs]===0x0A||sig[firstNonWs]===0x0D||sig[firstNonWs]===0x09))firstNonWs++;
+    // Skip UTF-8 BOM (EF BB BF)
+    if(sig[0]===0xEF&&sig[1]===0xBB&&sig[2]===0xBF)firstNonWs=3;
+    if(sig[firstNonWs]!==0x3C)return buf;// Not HTML → actual file content
+    // It's an HTML confirmation page — try to find the real download URL
     const html=new TextDecoder().decode(buf);
-    const cm=html.match(/confirm=([0-9A-Za-z_-]+)/);
-    if(cm){
-      r=await fetch('https://drive.google.com/uc?export=download&confirm='+cm[1]+'&id='+fileId);
-      if(!r.ok)return null;
-      return r.arrayBuffer();
+    // New format (2023+): <form action="https://drive.usercontent.google.com/download?...">
+    const actionM=html.match(/action="(https?:\/\/[^"]*(?:download|uc)[^"]*)"/);
+    if(actionM){
+      const actionUrl=actionM[1].replace(/&amp;/g,'&');
+      try{
+        const r2=await fetch(actionUrl);
+        if(r2.ok){
+          const b2=await r2.arrayBuffer();
+          if(b2.byteLength>4){const s2=new Uint8Array(b2,0,4);if(s2[0]!==0x3C)return b2;}
+        }
+      }catch(e){}
     }
-    return null;
+    // Old format: confirm=LONGTOKEN (not 't')
+    const cm=html.match(/[?&]confirm=([0-9A-Za-z_-]{2,})/);
+    if(cm&&cm[1]!=='t'){
+      try{
+        const r2=await fetch('https://drive.google.com/uc?export=download&confirm='+cm[1]+'&id='+fileId);
+        if(r2.ok){
+          const b2=await r2.arrayBuffer();
+          if(b2.byteLength>4){const s2=new Uint8Array(b2,0,4);if(s2[0]!==0x3C)return b2;}
+        }
+      }catch(e){}
+    }
+    // uuid-based new format
+    const uuidM=html.match(/[?&]uuid=([0-9A-Za-z_-]+)/);
+    if(uuidM){
+      try{
+        const r2=await fetch('https://drive.usercontent.google.com/download?id='+fileId+'&export=download&confirm=t&uuid='+uuidM[1]);
+        if(r2.ok){
+          const b2=await r2.arrayBuffer();
+          if(b2.byteLength>4){const s2=new Uint8Array(b2,0,4);if(s2[0]!==0x3C)return b2;}
+        }
+      }catch(e){}
+    }
   }
-  return buf;
+  return null;
 }
 
-// Extract CSV texts from a buffer (either raw CSV or ZIP containing CSVs)
+// Extract CSV texts from a buffer (either raw CSV or ZIP containing CSVs).
+// Handles CSVs in ZIP root AND subdirectories (e.g. 004/data.csv).
 async function bufToCsvTexts(buf){
+  if(!buf||buf.byteLength<4)return [];
   const bytes=new Uint8Array(buf,0,4);
-  if(bytes[0]===0x50&&bytes[1]===0x4B){// ZIP
+  if(bytes[0]===0x50&&bytes[1]===0x4B){// ZIP magic PK
     if(typeof JSZip==='undefined')return [];
     const zip=await JSZip.loadAsync(buf);
-    const texts=[];
     const entries=[];
-    zip.forEach((path,f)=>{if(!f.dir&&path.toLowerCase().endsWith('.csv'))entries.push(f);});
-    for(const f of entries)texts.push(await f.async('text'));
-    return texts;
+    // path includes full relative path e.g. "004/data.csv" — endsWith check finds CSVs anywhere in the tree
+    zip.forEach((path,f)=>{
+      if(!f.dir&&path.toLowerCase().endsWith('.csv')&&!path.startsWith('__MACOSX'))entries.push(f);
+    });
+    if(!entries.length)return [];
+    const texts=await Promise.all(entries.map(f=>f.async('text')));
+    return texts.filter(t=>t&&t.trim().length>0);
   }
-  return [new TextDecoder('utf-8').decode(buf)];
+  const text=new TextDecoder('utf-8').decode(buf);
+  return text.trim().length?[text]:[];
 }
 
 // List all files in a public Google Drive folder (requires API key)
@@ -934,14 +982,15 @@ async function loadGD(url){
   try{
     msg('下載檔案...');
     const buf=await fetchDriveFile(fid);
-    if(!buf){show('home');toast('下載失敗，請確認連結設為公開');return;}
+    if(!buf){show('home');toast('下載失敗，請確認連結設為「知道連結者皆可查看」');return;}
+    msg('解析檔案...');
     const texts=await bufToCsvTexts(buf);
-    if(!texts.length){show('home');toast('ZIP 中找不到 CSV 檔案');return;}
+    if(!texts.length){show('home');toast('找不到 CSV 檔案（ZIP 內含 '+new Uint8Array(buf,0,2).join(',')+' 開頭，請確認格式）');return;}
     msg('分析數據...');
     const d=procCSV(texts);
     if(d){const dt=parseDataDate(texts[0],'')||new Date();addRider(d,'GDrive_'+dt.toLocaleDateString('zh-TW'),dt.toISOString());return;}
-    show('home');toast('無法偵測有效圈數');
-  }catch(e){console.error('GDrive:',e);}
+    show('home');toast('無法偵測有效圈數（共 '+texts.length+' 個 CSV，請確認資料格式）');
+  }catch(e){console.error('GDrive:',e);show('home');toast('匯入錯誤：'+e.message);}
   show('home');toast('請確認連結設為公開，或直接選擇檔案匯入');
 }
 
