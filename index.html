@@ -44,15 +44,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .gd-box .hint{color:var(--text3);font-size:10px;margin-top:4px;}
 .gd-box button,.btn-primary{width:100%;background:var(--green);color:#fff;border:none;padding:11px;border-radius:8px;font-size:14px;font-weight:600;margin-top:10px;cursor:pointer;}
 .gd-box button:active,.btn-primary:active{opacity:.85;transform:scale(.98);}
-.gd-apikey{margin-top:8px;border-top:1px solid var(--border);padding-top:8px;}
-.gd-apikey-toggle{font-size:11px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;user-select:none;}
-.gd-apikey-toggle:hover{color:var(--text);}
-.gd-apikey-panel{display:none;margin-top:8px;}
-.gd-apikey-panel.open{display:block;}
-.gd-apikey-panel input{font-size:12px;padding:7px 10px;}
-.gd-apikey-panel .hint{margin-top:4px;}
-.gd-apikey-panel .hint a{color:var(--blue);text-decoration:none;}
-.gd-apikey-save{margin-top:6px;background:var(--blue) !important;padding:7px !important;font-size:12px !important;}
 .gd-picker-btn{background:var(--blue) !important;margin-bottom:4px;}
 .gd-picker-btn:disabled{opacity:.5;cursor:not-allowed;}
 .gd-manual{margin:6px 0;}
@@ -60,7 +51,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .gd-manual summary:hover{color:var(--text);}
 .gd-manual summary::before{content:'▸';font-size:10px;}
 .gd-manual[open] summary::before{content:'▾';}
-.gd-apikey-panel label.sub{font-size:11px;color:var(--text2);display:block;margin-top:6px;}
 
 .or-div{text-align:center;color:var(--text3);margin:12px 0;font-size:11px;}
 .up-box{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center;cursor:pointer;}
@@ -242,7 +232,7 @@ canvas{width:100%;border-radius:5px;background:var(--bg);touch-action:pan-y;}
   <div class="gd-box">
     <label>📁 從 Google Drive 匯入</label>
     <!-- Primary: Google Picker (OAuth) -->
-    <button id="gdPickerBtn" class="gd-picker-btn" onclick="startGdPicker()">🗂️ 選取 Google Drive 檔案</button>
+    <button id="gdPickerBtn" class="gd-picker-btn" onclick="startGdPicker()">🗂️ 從 Google Drive 選擇檔案</button>
     <!-- Fallback: manual URL -->
     <details class="gd-manual">
       <summary>或手動貼上連結（備用）</summary>
@@ -250,24 +240,6 @@ canvas{width:100%;border-radius:5px;background:var(--bg);touch-action:pan-y;}
       <div class="hint">資料夾或檔案需設為「知道連結的人都能查看」</div>
       <button id="gdBtn" style="margin-top:8px;background:var(--orange);">載入連結</button>
     </details>
-    <!-- Settings -->
-    <div class="gd-apikey">
-      <div class="gd-apikey-toggle" id="gdKeyToggle" onclick="toggleGdKey()">
-        <span>⚙️</span><span id="gdKeyStatus">憑證未設定</span><span style="margin-left:auto">▸</span>
-      </div>
-      <div class="gd-apikey-panel" id="gdKeyPanel">
-        <label class="sub">OAuth 2.0 Client ID</label>
-        <input type="text" id="gdClientIdInput" placeholder="xxxx.apps.googleusercontent.com">
-        <label class="sub">API Key</label>
-        <input type="text" id="gdApiKeyInput" placeholder="Google Drive API Key...">
-        <div class="hint" style="margin-top:6px;">
-          申請：<a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a>
-          → 啟用 Drive API &amp; Picker API → 建立 OAuth Client ID（Web 應用程式，
-          已授權的 JavaScript 來源：<b>https://mb75071301-afk.github.io</b>）+ API 金鑰
-        </div>
-        <button class="gd-apikey-save" onclick="saveGdKey()">儲存設定</button>
-      </div>
-    </div>
   </div>
   <div class="or-div">— 或 —</div>
   <div class="up-box" id="upBox"><div class="ico">📂</div><p>從手機/電腦選擇 CSV 檔案</p><input type="file" id="upFiles" multiple accept=".csv,.CSV"></div>
@@ -482,11 +454,9 @@ function updLangUI(){
 }
 let sessions=[];
 try{sessions=JSON.parse(localStorage.getItem('tSessions')||'[]');}catch(e){}
-// Restore credentials, update UI, and pre-load Google SDK if credentials are already configured
+// Pre-load Google SDK in background so it's ready when user first clicks the Picker button
 document.addEventListener('DOMContentLoaded',()=>{
-  updateGdKeyStatus();
-  // Pre-load SDK in background so it's ready when user first clicks the Picker button
-  if(gdClientId&&gdApiKey)initGoogleSDK().catch(()=>{});
+  initGoogleSDK().catch(()=>{});
 });
 
 // Helpers
@@ -846,46 +816,14 @@ function procCSV(texts){
 }
 
 // ===== Google Drive Credentials + Picker =====
-let gdApiKey=localStorage.getItem('gdApiKey')||'';
-let gdClientId=localStorage.getItem('gdClientId')||'';
+const gdApiKey='AIzaSyCKOLjf0vcCiGa09Ehff10WiKCVLybEoOw';
+const gdClientId='380794126765-cd4s2pv2957gdpoki1fpv3k3uvombmj3.apps.googleusercontent.com';
 let gapiPickerReady=false;
 let gdTokenClient=null;
 let gdAccessToken=null;
 
-function toggleGdKey(){
-  const panel=document.getElementById('gdKeyPanel');
-  const arrow=document.querySelector('#gdKeyToggle span:last-child');
-  const open=panel.classList.toggle('open');
-  if(arrow)arrow.textContent=open?'▾':'▸';
-  if(open){
-    document.getElementById('gdApiKeyInput').value=gdApiKey;
-    document.getElementById('gdClientIdInput').value=gdClientId;
-  }
-}
-function saveGdKey(){
-  gdApiKey=document.getElementById('gdApiKeyInput').value.trim();
-  gdClientId=document.getElementById('gdClientIdInput').value.trim();
-  localStorage.setItem('gdApiKey',gdApiKey);
-  localStorage.setItem('gdClientId',gdClientId);
-  gdTokenClient=null;gdAccessToken=null;// force re-init with new credentials
-  updateGdKeyStatus();
-  document.getElementById('gdKeyPanel').classList.remove('open');
-  const arrow=document.querySelector('#gdKeyToggle span:last-child');
-  if(arrow)arrow.textContent='▸';
-  if(gdClientId&&gdApiKey)initGoogleSDK().catch(()=>{});
-  toast(gdClientId&&gdApiKey?'設定已儲存 ✓':'設定已清除');
-}
-function updateGdKeyStatus(){
-  const el=document.getElementById('gdKeyStatus');
-  if(!el)return;
-  if(gdClientId&&gdApiKey)el.textContent='已設定 ✓';
-  else if(gdApiKey&&!gdClientId)el.textContent='缺少 Client ID（手動連結仍可用）';
-  else el.textContent='憑證未設定';
-}
-
 // ===== Google SDK Loader (called proactively; NOT inside click handler) =====
 async function initGoogleSDK(){
-  if(!gdClientId||!gdApiKey)return;
   // Load gapi
   if(typeof gapi==='undefined'){
     await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://apis.google.com/js/api.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
@@ -911,13 +849,6 @@ async function initGoogleSDK(){
 
 // ===== Picker Entry Point (must be called synchronously from user click) =====
 function startGdPicker(){
-  if(!gdClientId||!gdApiKey){
-    document.getElementById('gdKeyPanel').classList.add('open');
-    const arrow=document.querySelector('#gdKeyToggle span:last-child');
-    if(arrow)arrow.textContent='▾';
-    toast('請先設定 OAuth Client ID 和 API Key');
-    return;
-  }
   if(!gdTokenClient||!gapiPickerReady){
     // SDK not ready yet — try loading, then ask user to click again
     toast('正在載入 Google SDK，請稍候後再試一次…');
