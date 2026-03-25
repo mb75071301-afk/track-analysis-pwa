@@ -821,29 +821,47 @@ const gdClientId='380794126765-cd4s2pv2957gdpoki1fpv3k3uvombmj3.apps.googleuserc
 let gapiPickerReady=false;
 let gdTokenClient=null;
 let gdAccessToken=null;
+let gdSdkLoading=false;
+let gdSdkLoaded=false;
 
 // ===== Google SDK Loader (called proactively; NOT inside click handler) =====
 async function initGoogleSDK(){
-  // Load gapi
-  if(typeof gapi==='undefined'){
-    await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://apis.google.com/js/api.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
-  }
-  // Load Picker via gapi.load
-  if(!gapiPickerReady){
-    await new Promise(res=>gapi.load('picker',res));
-    gapiPickerReady=true;
-  }
-  // Load Google Identity Services
-  if(typeof google==='undefined'||!google.accounts){
-    await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
-  }
-  // Init token client (only once; recreate if credentials changed)
-  if(!gdTokenClient){
-    gdTokenClient=google.accounts.oauth2.initTokenClient({
-      client_id:gdClientId,
-      scope:'https://www.googleapis.com/auth/drive.readonly',
-      callback:handleGdToken,
-    });
+  if(gdSdkLoaded)return;
+  if(gdSdkLoading)return;
+  gdSdkLoading=true;
+  try{
+    // Load gapi
+    if(typeof gapi==='undefined'){
+      await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://apis.google.com/js/api.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+    }
+    // Load Picker via gapi.load
+    if(!gapiPickerReady){
+      await new Promise(res=>gapi.load('picker',res));
+      gapiPickerReady=true;
+    }
+    // Load Google Identity Services
+    if(typeof google==='undefined'||!google.accounts||!google.accounts.oauth2){
+      await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+    }
+    // Init token client (only once)
+    if(!gdTokenClient){
+      gdTokenClient=google.accounts.oauth2.initTokenClient({
+        client_id:gdClientId,
+        scope:'https://www.googleapis.com/auth/drive.readonly',
+        callback:handleGdToken,
+        error_callback:(err)=>{
+          console.error('Google OAuth error:',err);
+          const msg=err&&(err.message||err.type)||'未知錯誤';
+          toast('Google 授權失敗：'+msg+'（請確認彈出視窗未被封鎖）');
+        },
+      });
+    }
+    gdSdkLoaded=true;
+  }catch(e){
+    console.error('Google SDK load error:',e);
+    throw e;
+  }finally{
+    gdSdkLoading=false;
   }
 }
 
@@ -855,8 +873,10 @@ function startGdPicker(){
     initGoogleSDK().catch(()=>toast('Google SDK 載入失敗，請確認網路連線'));
     return;
   }
-  // requestAccessToken MUST be called synchronously inside a user-click handler
-  gdTokenClient.requestAccessToken({prompt:gdAccessToken?'':'select_account'});
+  // requestAccessToken MUST be called synchronously inside a user-click handler.
+  // Use 'consent' for first auth (shows combined account+consent in one step, avoiding
+  // the double-redirect that 'select_account' triggers which can fail in popup mode).
+  gdTokenClient.requestAccessToken({prompt:gdAccessToken?'':'consent'});
 }
 
 async function handleGdToken(resp){
