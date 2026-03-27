@@ -11,6 +11,9 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+<!-- Google APIs: loaded at page start so tokenClient is ready before user clicks -->
+<script async src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+<script async src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
 <title>RES Instrument — Racing Telemetry Analysis</title>
 <meta property="og:title" content="RES Instrument — Racing Telemetry Analysis">
 <meta property="og:description" content="Racing Electronic System — GPS軌跡、G值、懸吊、煞車點、分段計時、傾角推估、AI建議">
@@ -454,10 +457,7 @@ function updLangUI(){
 }
 let sessions=[];
 try{sessions=JSON.parse(localStorage.getItem('tSessions')||'[]');}catch(e){}
-// Pre-load Google SDK in background so it's ready when user first clicks the Picker button
-document.addEventListener('DOMContentLoaded',()=>{
-  initGoogleSDK().catch(()=>{});
-});
+// Google SDK callbacks — invoked by <script onload> tags in <head>
 
 // Helpers
 function ms2l(ms){const m=Math.floor(ms/60000),s=((ms%60000)/1000).toFixed(3);return m+':'+(s<10?'0':'')+s;}
@@ -818,64 +818,34 @@ function procCSV(texts){
 // ===== Google Drive Credentials + Picker =====
 const gdApiKey='AIzaSyCKOLjf0vcCiGa09Ehff10WiKCVLybEoOw';
 const gdClientId='380794126765-cd4s2pv2957gdpoki1fpv3k3uvombmj3.apps.googleusercontent.com';
-let gapiPickerReady=false;
-let gdTokenClient=null;
-let gdAccessToken=null;
-let gdSdkLoading=false;
-let gdSdkLoaded=false;
+var gapiPickerReady=false;  // set by gapiLoaded → gapi.load('picker') callback
+var gdTokenClient=null;     // set by gisLoaded
+var gdAccessToken=null;
 
-// ===== Google SDK Loader (called proactively; NOT inside click handler) =====
-async function initGoogleSDK(){
-  if(gdSdkLoaded)return;
-  if(gdSdkLoading)return;
-  gdSdkLoading=true;
-  try{
-    // Load gapi
-    if(typeof gapi==='undefined'){
-      await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://apis.google.com/js/api.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
-    }
-    // Load Picker via gapi.load
-    if(!gapiPickerReady){
-      await new Promise(res=>gapi.load('picker',res));
-      gapiPickerReady=true;
-    }
-    // Load Google Identity Services
-    if(typeof google==='undefined'||!google.accounts||!google.accounts.oauth2){
-      await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
-    }
-    // Init token client (only once)
-    if(!gdTokenClient){
-      gdTokenClient=google.accounts.oauth2.initTokenClient({
-        client_id:gdClientId,
-        scope:'https://www.googleapis.com/auth/drive.readonly',
-        callback:handleGdToken,
-        error_callback:(err)=>{
-          console.error('Google OAuth error:',err);
-          const msg=err&&(err.message||err.type)||'未知錯誤';
-          toast('Google 授權失敗：'+msg+'（請確認彈出視窗未被封鎖）');
-        },
-      });
-    }
-    gdSdkLoaded=true;
-  }catch(e){
-    console.error('Google SDK load error:',e);
-    throw e;
-  }finally{
-    gdSdkLoading=false;
-  }
+// Called by <script async onload> for apis.google.com/js/api.js
+function gapiLoaded(){
+  gapi.load('picker',()=>{gapiPickerReady=true;});
 }
 
-// ===== Picker Entry Point (must be called synchronously from user click) =====
+// Called by <script async onload> for accounts.google.com/gsi/client
+function gisLoaded(){
+  gdTokenClient=google.accounts.oauth2.initTokenClient({
+    client_id:gdClientId,
+    scope:'https://www.googleapis.com/auth/drive.readonly',
+    callback:handleGdToken,
+    error_callback:(err)=>{
+      console.error('Google OAuth error:',err);
+      const msg=err&&(err.message||err.type)||'未知錯誤';
+      toast('Google 授權失敗：'+msg+'（請確認彈出視窗未被封鎖）');
+    },
+  });
+}
+
+// ===== Picker Entry Point — called synchronously from user click, no async =====
 function startGdPicker(){
-  if(!gdTokenClient||!gapiPickerReady){
-    // SDK not ready yet — try loading, then ask user to click again
-    toast('正在載入 Google SDK，請稍候後再試一次…');
-    initGoogleSDK().catch(()=>toast('Google SDK 載入失敗，請確認網路連線'));
-    return;
-  }
-  // requestAccessToken MUST be called synchronously inside a user-click handler.
-  // Use 'consent' for first auth (shows combined account+consent in one step, avoiding
-  // the double-redirect that 'select_account' triggers which can fail in popup mode).
+  if(!gdTokenClient){toast('Google Identity Services 尚未載入，請稍後再試');return;}
+  if(!gapiPickerReady){toast('Google Picker 尚未載入，請稍後再試');return;}
+  // requestAccessToken must be called synchronously inside a user-click handler
   gdTokenClient.requestAccessToken({prompt:gdAccessToken?'':'consent'});
 }
 
