@@ -824,51 +824,80 @@ var gdAccessToken=null;
 
 // Called by <script async onload> for apis.google.com/js/api.js
 function gapiLoaded(){
-  gapi.load('picker',()=>{gapiPickerReady=true;});
+  console.log('[GDrive] gapiLoaded called');
+  try{
+    gapi.load('picker',()=>{
+      gapiPickerReady=true;
+      console.log('[GDrive] Picker API ready');
+    });
+  }catch(e){console.error('[GDrive] gapi.load error:',e);}
 }
 
 // Called by <script async onload> for accounts.google.com/gsi/client
 function gisLoaded(){
-  gdTokenClient=google.accounts.oauth2.initTokenClient({
-    client_id:gdClientId,
-    scope:'https://www.googleapis.com/auth/drive.readonly',
-    callback:handleGdToken,
-    error_callback:(err)=>{
-      console.error('Google OAuth error:',err);
-      const msg=err&&(err.message||err.type)||'未知錯誤';
-      toast('Google 授權失敗：'+msg+'（請確認彈出視窗未被封鎖）');
-    },
-  });
+  console.log('[GDrive] gisLoaded called');
+  try{
+    gdTokenClient=google.accounts.oauth2.initTokenClient({
+      client_id:gdClientId,
+      scope:'https://www.googleapis.com/auth/drive.readonly',
+      callback:handleGdToken,
+      error_callback:(err)=>{
+        console.error('[GDrive] OAuth error:',err);
+        const msg=err&&(err.message||err.type)||'未知錯誤';
+        if(err&&err.type==='popup_failed_to_open'){
+          toast('彈出視窗被封鎖，請允許此網站的彈出視窗後重試');
+        }else{
+          toast('Google 授權失敗：'+msg);
+        }
+      },
+    });
+    console.log('[GDrive] tokenClient initialized');
+  }catch(e){console.error('[GDrive] gisLoaded error:',e);}
 }
 
 // ===== Picker Entry Point — called synchronously from user click, no async =====
 function startGdPicker(){
+  console.log('[GDrive] startGdPicker: gdTokenClient='+!!gdTokenClient+', gapiPickerReady='+gapiPickerReady);
   if(!gdTokenClient){toast('Google Identity Services 尚未載入，請稍後再試');return;}
-  if(!gapiPickerReady){toast('Google Picker 尚未載入，請稍後再試');return;}
-  // requestAccessToken must be called synchronously inside a user-click handler
+  if(!gapiPickerReady){toast('Google Picker API 尚未載入，請稍後再試');return;}
+  // requestAccessToken MUST be called synchronously inside a user-click handler
   gdTokenClient.requestAccessToken({prompt:gdAccessToken?'':'consent'});
 }
 
-async function handleGdToken(resp){
-  if(resp.error){toast('Google 授權失敗：'+(resp.error_description||resp.error));return;}
+function handleGdToken(resp){
+  console.log('[GDrive] handleGdToken called, error='+resp.error);
+  if(resp.error){
+    console.error('[GDrive] token error:',resp);
+    toast('Google 授權失敗：'+(resp.error_description||resp.error));
+    return;
+  }
   gdAccessToken=resp.access_token;
+  console.log('[GDrive] access token received, opening picker');
   openPicker();
 }
 
 function openPicker(){
-  if(!gapiPickerReady||!gdAccessToken)return;
-  const view=new google.picker.DocsView(google.picker.ViewId.DOCS)
-    .setMimeTypes('text/csv,application/zip,application/x-zip-compressed,application/octet-stream')
-    .setIncludeFolders(false);
-  new google.picker.PickerBuilder()
-    .addView(view)
-    .setOAuthToken(gdAccessToken)
-    .setDeveloperKey(gdApiKey)
-    .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
-    .setOrigin(location.protocol+'//'+location.host)
-    .setCallback(pickerCallback)
-    .build()
-    .setVisible(true);
+  console.log('[GDrive] openPicker: gapiPickerReady='+gapiPickerReady+', token='+(gdAccessToken?'ok':'null')+', origin='+location.origin);
+  if(!gapiPickerReady){toast('Picker API 尚未就緒，請重試');return;}
+  if(!gdAccessToken){toast('尚未取得授權 token，請重試');return;}
+  try{
+    const view=new google.picker.DocsView(google.picker.ViewId.DOCS)
+      .setMimeTypes('text/csv,application/zip,application/x-zip-compressed,application/octet-stream')
+      .setIncludeFolders(false);
+    const picker=new google.picker.PickerBuilder()
+      .addView(view)
+      .setOAuthToken(gdAccessToken)
+      .setDeveloperKey(gdApiKey)
+      .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+      .setOrigin(location.origin)
+      .setCallback(pickerCallback)
+      .build();
+    picker.setVisible(true);
+    console.log('[GDrive] picker.setVisible(true) called');
+  }catch(e){
+    console.error('[GDrive] openPicker error:',e);
+    toast('開啟檔案選擇器失敗：'+e.message);
+  }
 }
 
 async function pickerCallback(data){
