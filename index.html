@@ -849,10 +849,15 @@ async function initGoogleSDK(){
         client_id:gdClientId,
         scope:'https://www.googleapis.com/auth/drive.readonly',
         callback:handleGdToken,
+        use_fedcm_for_prompt:true,
         error_callback:(err)=>{
           console.error('Google OAuth error:',err);
-          const msg=err&&(err.message||err.type)||'未知錯誤';
-          toast('Google 授權失敗：'+msg+'（請確認彈出視窗未被封鎖）');
+          if(err&&(err.type==='popup_closed'||err.type==='popup_failed_to_open')){
+            toast('授權視窗已關閉。請再試一次，若問題持續請確認瀏覽器未封鎖彈出視窗。');
+          } else {
+            const msg=err&&(err.message||err.type)||'未知錯誤';
+            toast('Google 授權失敗：'+msg+'（請確認彈出視窗未被封鎖）');
+          }
         },
       });
     }
