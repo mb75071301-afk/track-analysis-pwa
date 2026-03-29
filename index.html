@@ -847,7 +847,7 @@ function initGoogleSDK(){
       if(!gdTokenClient){
         gdTokenClient=google.accounts.oauth2.initTokenClient({
           client_id:gdClientId,
-          scope:'https://www.googleapis.com/auth/drive.readonly',
+          scope:'https://www.googleapis.com/auth/drive.file',
           callback:handleGdToken,
           use_fedcm_for_prompt:true,
           error_callback:(err)=>{
@@ -919,6 +919,7 @@ function openPicker(){
       .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
       .setOrigin(origin)
       .setCallback(pickerCallback)
+      .setAppId('380794126765')
       .build();
     console.log('[GD-DEBUG] picker built:', picker, '— calling setVisible(true)');
     picker.setVisible(true);
