@@ -919,6 +919,7 @@ function openPicker(){
       .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
       .setOrigin(origin)
       .setCallback(pickerCallback)
+      .setAppId('380794126765')
       .build();
     console.log('[GD-DEBUG] picker built:', picker, '— calling setVisible(true)');
     picker.setVisible(true);
