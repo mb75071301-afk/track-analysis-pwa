@@ -872,6 +872,8 @@ async function initGoogleSDK(){
 
 // ===== Picker Entry Point (must be called synchronously from user click) =====
 function startGdPicker(){
+  console.log('[GD-DEBUG] startGdPicker called');
+  console.log('[GD-DEBUG] gdTokenClient ready:', !!gdTokenClient, '| gapiPickerReady:', !!gapiPickerReady);
   if(!gdTokenClient||!gapiPickerReady){
     // SDK not ready yet — try loading, then ask user to click again
     toast('正在載入 Google SDK，請稍候後再試一次…');
@@ -881,32 +883,52 @@ function startGdPicker(){
   // requestAccessToken MUST be called synchronously inside a user-click handler.
   // Use 'consent' for first auth (shows combined account+consent in one step, avoiding
   // the double-redirect that 'select_account' triggers which can fail in popup mode).
-  gdTokenClient.requestAccessToken({prompt:gdAccessToken?'':'consent'});
+  const prompt=gdAccessToken?'':'consent';
+  console.log('[GD-DEBUG] calling requestAccessToken, prompt:', prompt, '| existing token:', !!gdAccessToken);
+  gdTokenClient.requestAccessToken({prompt});
 }
 
 async function handleGdToken(resp){
+  console.log('[GD-DEBUG] handleGdToken called, resp:', resp);
+  console.log('[GD-DEBUG] access_token exists:', !!resp.access_token, '| error:', resp.error||'(none)');
   if(resp.error){toast('Google 授權失敗：'+(resp.error_description||resp.error));return;}
   gdAccessToken=resp.access_token;
+  console.log('[GD-DEBUG] gdAccessToken set, calling openPicker()');
   openPicker();
 }
 
 function openPicker(){
-  if(!gapiPickerReady||!gdAccessToken)return;
-  const view=new google.picker.DocsView(google.picker.ViewId.DOCS)
-    .setMimeTypes('text/csv,application/zip,application/x-zip-compressed,application/octet-stream')
-    .setIncludeFolders(false);
-  new google.picker.PickerBuilder()
-    .addView(view)
-    .setOAuthToken(gdAccessToken)
-    .setDeveloperKey(gdApiKey)
-    .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
-    .setOrigin(location.protocol+'//'+location.host)
-    .setCallback(pickerCallback)
-    .build()
-    .setVisible(true);
+  console.log('[GD-DEBUG] openPicker called, gapiPickerReady:', !!gapiPickerReady, '| gdAccessToken:', !!gdAccessToken);
+  if(!gapiPickerReady||!gdAccessToken){
+    console.log('[GD-DEBUG] openPicker early return — missing gapiPickerReady or gdAccessToken');
+    return;
+  }
+  try{
+    const view=new google.picker.DocsView(google.picker.ViewId.DOCS)
+      .setMimeTypes('text/csv,application/zip,application/x-zip-compressed,application/octet-stream')
+      .setIncludeFolders(false);
+    console.log('[GD-DEBUG] DocsView created, building PickerBuilder...');
+    const origin=location.protocol+'//'+location.host;
+    console.log('[GD-DEBUG] setOrigin:', origin);
+    const picker=new google.picker.PickerBuilder()
+      .addView(view)
+      .setOAuthToken(gdAccessToken)
+      .setDeveloperKey(gdApiKey)
+      .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+      .setOrigin(origin)
+      .setCallback(pickerCallback)
+      .build();
+    console.log('[GD-DEBUG] picker built:', picker, '— calling setVisible(true)');
+    picker.setVisible(true);
+    console.log('[GD-DEBUG] setVisible(true) called successfully');
+  }catch(e){
+    console.error('[GD-DEBUG] openPicker error:', e);
+  }
 }
 
 async function pickerCallback(data){
+  console.log('[GD-DEBUG] pickerCallback called, data:', data);
+  console.log('[GD-DEBUG] action:', data[google.picker.Response.ACTION]);
   if(data[google.picker.Response.ACTION]!==google.picker.Action.PICKED)return;
   const docs=data[google.picker.Response.DOCUMENTS];
   if(!docs||!docs.length)return;
