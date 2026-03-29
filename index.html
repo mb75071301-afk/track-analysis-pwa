@@ -821,68 +821,70 @@ const gdClientId='380794126765-cd4s2pv2957gdpoki1fpv3k3uvombmj3.apps.googleuserc
 let gapiPickerReady=false;
 let gdTokenClient=null;
 let gdAccessToken=null;
-let gdSdkLoading=false;
 let gdSdkLoaded=false;
+let gdSdkLoadPromise=null;
 
-// ===== Google SDK Loader (called proactively; NOT inside click handler) =====
-async function initGoogleSDK(){
-  if(gdSdkLoaded)return;
-  if(gdSdkLoading)return;
-  gdSdkLoading=true;
-  try{
-    // Load gapi
-    if(typeof gapi==='undefined'){
-      await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://apis.google.com/js/api.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+// ===== Google SDK Loader (returns the same in-flight promise on concurrent calls) =====
+function initGoogleSDK(){
+  if(gdSdkLoaded)return Promise.resolve();
+  if(gdSdkLoadPromise)return gdSdkLoadPromise;
+  gdSdkLoadPromise=(async()=>{
+    try{
+      // Load gapi
+      if(typeof gapi==='undefined'){
+        await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://apis.google.com/js/api.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+      }
+      // Load Picker via gapi.load
+      if(!gapiPickerReady){
+        await new Promise(res=>gapi.load('picker',res));
+        gapiPickerReady=true;
+      }
+      // Load Google Identity Services
+      if(typeof google==='undefined'||!google.accounts||!google.accounts.oauth2){
+        await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+      }
+      // Init token client (only once)
+      if(!gdTokenClient){
+        gdTokenClient=google.accounts.oauth2.initTokenClient({
+          client_id:gdClientId,
+          scope:'https://www.googleapis.com/auth/drive.readonly',
+          callback:handleGdToken,
+          use_fedcm_for_prompt:true,
+          error_callback:(err)=>{
+            console.error('Google OAuth error:',err);
+            if(err&&(err.type==='popup_closed'||err.type==='popup_failed_to_open')){
+              toast('授權視窗已關閉。請再試一次，若問題持續請確認瀏覽器未封鎖彈出視窗。');
+            } else {
+              const msg=err&&(err.message||err.type)||'未知錯誤';
+              toast('Google 授權失敗：'+msg+'（請確認彈出視窗未被封鎖）');
+            }
+          },
+        });
+      }
+      gdSdkLoaded=true;
+    }catch(e){
+      console.error('Google SDK load error:',e);
+      gdSdkLoadPromise=null; // allow retry on next click
+      throw e;
     }
-    // Load Picker via gapi.load
-    if(!gapiPickerReady){
-      await new Promise(res=>gapi.load('picker',res));
-      gapiPickerReady=true;
-    }
-    // Load Google Identity Services
-    if(typeof google==='undefined'||!google.accounts||!google.accounts.oauth2){
-      await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
-    }
-    // Init token client (only once)
-    if(!gdTokenClient){
-      gdTokenClient=google.accounts.oauth2.initTokenClient({
-        client_id:gdClientId,
-        scope:'https://www.googleapis.com/auth/drive.readonly',
-        callback:handleGdToken,
-        use_fedcm_for_prompt:true,
-        error_callback:(err)=>{
-          console.error('Google OAuth error:',err);
-          if(err&&(err.type==='popup_closed'||err.type==='popup_failed_to_open')){
-            toast('授權視窗已關閉。請再試一次，若問題持續請確認瀏覽器未封鎖彈出視窗。');
-          } else {
-            const msg=err&&(err.message||err.type)||'未知錯誤';
-            toast('Google 授權失敗：'+msg+'（請確認彈出視窗未被封鎖）');
-          }
-        },
-      });
-    }
-    gdSdkLoaded=true;
-  }catch(e){
-    console.error('Google SDK load error:',e);
-    throw e;
-  }finally{
-    gdSdkLoading=false;
-  }
+  })();
+  return gdSdkLoadPromise;
 }
 
-// ===== Picker Entry Point (must be called synchronously from user click) =====
-function startGdPicker(){
+// ===== Picker Entry Point =====
+// use_fedcm_for_prompt:true means FedCM handles the auth UI natively — no
+// synchronous-from-click requirement, so we can safely await SDK init here.
+async function startGdPicker(){
   console.log('[GD-DEBUG] startGdPicker called');
-  console.log('[GD-DEBUG] gdTokenClient ready:', !!gdTokenClient, '| gapiPickerReady:', !!gapiPickerReady);
-  if(!gdTokenClient||!gapiPickerReady){
-    // SDK not ready yet — try loading, then ask user to click again
-    toast('正在載入 Google SDK，請稍候後再試一次…');
-    initGoogleSDK().catch(()=>toast('Google SDK 載入失敗，請確認網路連線'));
+  console.log('[GD-DEBUG] gdSdkLoaded:', gdSdkLoaded, '| gdTokenClient ready:', !!gdTokenClient, '| gapiPickerReady:', !!gapiPickerReady);
+  try{
+    await initGoogleSDK();
+  }catch(e){
+    toast('Google SDK 載入失敗，請確認網路連線');
     return;
   }
-  // requestAccessToken MUST be called synchronously inside a user-click handler.
-  // Use 'consent' for first auth (shows combined account+consent in one step, avoiding
-  // the double-redirect that 'select_account' triggers which can fail in popup mode).
+  console.log('[GD-DEBUG] SDK ready — gdTokenClient:', !!gdTokenClient, '| gapiPickerReady:', !!gapiPickerReady);
+  // Use 'consent' for first auth; empty string to silently reuse existing token.
   const prompt=gdAccessToken?'':'consent';
   console.log('[GD-DEBUG] calling requestAccessToken, prompt:', prompt, '| existing token:', !!gdAccessToken);
   gdTokenClient.requestAccessToken({prompt});
