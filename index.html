@@ -921,14 +921,15 @@ function openPicker(){
       .setAppId('380794126765')
       .build();
     console.log('[GD-DEBUG] picker built:', picker, '— calling setVisible(true)');
-    picker.setVisible(true);
+    ['homeScreen','loadScreen'].forEach(function(id){var e=document.getElementById(id);if(e){e.dataset.origZ=e.style.zIndex||getComputedStyle(e).zIndex;e.style.zIndex='-1';}});
+picker.setVisible(true);
     console.log('[GD-DEBUG] setVisible(true) called successfully');
   }catch(e){
     console.error('[GD-DEBUG] openPicker error:', e);
   }
 }
 
-async function pickerCallback(data){
+async function pickerCallback(data){['homeScreen','loadScreen'].forEach(function(id){var e=document.getElementById(id);if(e&&e.dataset.origZ)e.style.zIndex=e.dataset.origZ;});
   console.log('[GD-DEBUG] pickerCallback called, data:', data);
   console.log('[GD-DEBUG] action:', data[google.picker.Response.ACTION]);
   if(data[google.picker.Response.ACTION]!==google.picker.Action.PICKED)return;
