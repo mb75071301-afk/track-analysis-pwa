@@ -914,7 +914,7 @@ function openPicker(){
     const picker=new google.picker.PickerBuilder()
       .addView(view)
       .setOAuthToken(gdAccessToken)
-      .setDeveloperKey(gdApiKey).setAppId('380794126765')
+      .setAppId('380794126765')
       .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
       .setOrigin(origin)
       .setCallback(pickerCallback)
