@@ -849,7 +849,6 @@ function initGoogleSDK(){
           client_id:gdClientId,
           scope:'https://www.googleapis.com/auth/drive.file',
           callback:handleGdToken,
-          use_fedcm_for_prompt:true,
           error_callback:(err)=>{
             console.error('Google OAuth error:',err);
             if(err&&(err.type==='popup_closed'||err.type==='popup_failed_to_open')){
