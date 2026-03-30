@@ -1082,7 +1082,7 @@ async function loadGDFolder(folderId){
     allTexts.push(...txts);
   }
   if(!allTexts.length){show('home');toast('無法讀取任何 CSV 資料');return;}
-  msg('分析數據...');
+  console.log('[GD-DEBUG] allTexts count:', allTexts.length, 'first 300 chars:', allTexts[0]?allTexts[0].substring(0,300):'(empty)');msg('分析數據...');
   const d=procCSV(allTexts);
   if(d){
     const dt=parseDataDate(allTexts[0],files[0].name)||new Date();
