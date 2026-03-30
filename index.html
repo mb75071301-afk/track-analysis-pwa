@@ -906,7 +906,7 @@ function openPicker(){
   }
   try{
     const view=new google.picker.DocsView(google.picker.ViewId.DOCS)
-      .setMimeTypes('text/csv,application/zip,application/x-zip-compressed,application/octet-stream')
+      .setMimeTypes('text/csv,application/zip,application/x-zip-compressed,application/octet-stream,application/vnd.google-apps.spreadsheet')
       .setIncludeFolders(false);
     console.log('[GD-DEBUG] DocsView created, building PickerBuilder...');
     const origin=location.protocol+'//'+location.host;
@@ -944,7 +944,7 @@ async function pickerCallback(data){if(data[google.picker.Response.ACTION]!=='lo
     msg('下載 '+fileName+' ('+(i+1)+'/'+docs.length+')...');
     let r;
     try{
-      r=await fetch('https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media',
+      const mimeType=doc[google.picker.Document.MIME_TYPE]||doc.mimeType||'';const isGSheet=mimeType.indexOf('google-apps.spreadsheet')!==-1;console.log('[GD-DEBUG] mimeType:',mimeType,'isGSheet:',isGSheet);const fetchUrl=isGSheet?'https://www.googleapis.com/drive/v3/files/'+fileId+'/export?mimeType=text%2Fcsv':'https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media';r=await fetch(fetchUrl,
         {headers:{Authorization:'Bearer '+gdAccessToken}});
     }catch(e){console.error('[GD-DEBUG] fetch error:',e);toast('無法連線下載 '+fileName);continue;}
     console.log('[GD-DEBUG] fetch resp:', r.status, r.statusText);if(!r.ok){
