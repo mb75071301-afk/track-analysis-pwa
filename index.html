@@ -847,7 +847,7 @@ function initGoogleSDK(){
       if(!gdTokenClient){
         gdTokenClient=google.accounts.oauth2.initTokenClient({
           client_id:gdClientId,
-          scope:'https://www.googleapis.com/auth/drive.file',
+          scope:'https://www.googleapis.com/auth/drive.readonly',
           callback:handleGdToken,
           error_callback:(err)=>{
             console.error('Google OAuth error:',err);
@@ -946,8 +946,8 @@ async function pickerCallback(data){if(data[google.picker.Response.ACTION]!=='lo
     try{
       r=await fetch('https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media',
         {headers:{Authorization:'Bearer '+gdAccessToken}});
-    }catch(e){toast('無法連線下載 '+fileName);continue;}
-    if(!r.ok){
+    }catch(e){console.error('[GD-DEBUG] fetch error:',e);toast('無法連線下載 '+fileName);continue;}
+    console.log('[GD-DEBUG] fetch resp:', r.status, r.statusText);if(!r.ok){
       if(r.status===401){gdAccessToken=null;toast('授權已過期，請重新點選「選取 Google Drive 檔案」');show('home');return;}
       toast('下載失敗 ('+r.status+'): '+fileName);continue;
     }
